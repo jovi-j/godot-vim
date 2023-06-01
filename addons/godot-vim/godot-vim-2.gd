@@ -11,7 +11,6 @@ var vim_mode : bool = true
 var visual_mode : bool = false
 var visual_line_mode : bool = false
 var process_paste : bool = false
-var process_paste_enter : bool = false
 
 var input_buffer : Array = []
 var clip_buffer : String = ""
@@ -25,8 +24,6 @@ var full_line_copy : bool = false
 var breakers : Array = ['!', '"', '#', '$', '%', '&', "'", '(', ')', '*', '+', ',', '-', '.', '/', ':', ';', '<', '=', '>', '?', '@', '[', '\\', ']', '^', '`', '\'', '{', '|', '}', '~']
 var whitespace : Array = [' ','	']
 var alphanumeric : Array = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n', 'o', 'p', 'q', 'r', 's', 't', 'u', 'v', 'w', 'x', 'y', 'z', 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z', '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '_']
-
-
 
 var command_counter_buffer : String  = ""
 
@@ -69,6 +66,7 @@ var bindings = {
 	["D"]: visual_mode_delete,
 	["D","D"]: delete_line,
 	["D", "W"]: delete_word,
+	["D", "Shift+W"]: delete_WORD,
 	["D", "B"]: delete_backward,
 	["D", "E"]: delete_to_end_of_word,
 	["U"]: undo,
@@ -86,8 +84,8 @@ var bindings = {
 	["Z", "C"]: fold_line ,
 	["Z", "O"]: unfold_line,
 	["Z", "A"]: toggle_fold,
-	["C", "W"]: change_word,
-	["C","I","W"]: change_inside_word,
+	["C", "Shift+W"]: change_WORD,
+	["C", "w"]: change_word,
 	["Shift+C"]: change_line
 }
 
@@ -100,12 +98,6 @@ func _process(delta):
 		code_editor.paste()
 		enable_vim()
 		process_paste = false
-	if process_paste_enter:
-		await append_at_end_of_line()
-		await simulate_press(KEY_ENTER)
-		simulate_press(KEY_ENTER)
-		code_editor.paste()
-		process_paste_enter = false
 
 
 func _input(event):
@@ -428,18 +420,18 @@ func previous_line_insert():
 	code_editor.set_caret_column(99999)
 	enable_insert()
 	simulate_press(KEY_ENTER)
-	
 func paste_after():
-	if visual_mode:
-		visual_mode_delete()
-		enable_insert()
-		process_paste = true
+	if code_editor.has_selection():
+		code_editor.delete_selection()
+		code_editor.paste()
 		return
+	enable_insert()
 	if full_line_copy:
-		process_paste_enter = true
+		code_editor.set_caret_column(99999)
+		simulate_press(KEY_ENTER)
 	else:
 		move_column_relative(1)
-		process_paste = true
+	process_paste = true
 
 func paste_before():	
 	if code_editor.has_selection():
@@ -493,39 +485,30 @@ func delete_word():
 	code_editor.cut()
 	visual_mode = false
 
+func delete_WORD():
+	if curr_column() == code_editor.get_line(curr_line()).length() -1:
+		delete_at_cursor()
+		return
+	enter_visual_selection()
+	move_after_next_whitespace()
+	move_column_relative(-1)
+	update_selection()
+	code_editor.cut()
+	visual_mode = false
+
 # Change
+
 func change_word():
-	if curr_column() == code_editor.get_line(curr_line()).length() -1:
-		delete_at_cursor()
-		return
-	enter_visual_selection()
-	move_forward_to_start_of_word(false)
-	move_column_relative(-1)
-	update_selection()
-	code_editor.cut()
-	visual_mode = false
+	delete_word()
 	enable_insert()
-	
-func change_inside_word():
-	if curr_column() == code_editor.get_line(curr_line()).length() -1:
-		delete_at_cursor()
-		return
-	var current_text = code_editor.get_line(curr_line())
-	var col = curr_column()
-	if current_text[col-1] not in alphanumeric:
-		move_column_relative(1)
-	move_back_to_start_of_word(false)
-	enter_visual_selection()
-	move_forward_to_start_of_word(false)
-	move_column_relative(-1)
-	update_selection()
-	code_editor.cut()
-	visual_mode = false
+
+func change_WORD():
+	delete_WORD()
 	enable_insert()
 
 func change_line():
 	delete_line()
-	newline_insert()
+	enable_insert()
 
 func delete_backward():
 	move_column_relative(-1)
@@ -656,12 +639,9 @@ func visual_mode_yank():
 	code_editor.deselect()
 	reset_visual()
 func yank_line():
-	visual_line_mode = true
-	select_from_line = curr_line()
-	code_editor.select(curr_line(), 0, curr_line(), 99999)
-	copy()
+	select_line()
+	copy(true)
 	code_editor.deselect()
-	full_line_copy = true
 	reset_visual()
 
 func page_up():	
