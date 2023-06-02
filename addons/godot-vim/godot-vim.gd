@@ -67,6 +67,7 @@ var bindings = {
 	["X"]: delete_at_cursor,
 	["Shift+D"]: delete_to_end_of_line,
 	["D"]: visual_mode_delete,
+	["X"]: visual_mode_delete,
 	["D","D"]: delete_line,
 	["D", "W"]: delete_word,
 	["D", "B"]: delete_backward,
@@ -77,18 +78,21 @@ var bindings = {
 	["Y"]: visual_mode_yank,
 	["Y", "Y"]: yank_line,
 	["V"]: enter_visual_selection,
+	["I","W"]: visual_inside_word,
 	["Shift+V"]: enter_visual_line_selection,
 	["Slash"]: search_function,
 	["Shift+Comma", "Shift+Comma"]: dedent,
-	["Shift+Period", "Shift+Period"]: indent, 
+	["Shift+Period", "Shift+Period"]: indent,
 	["Z", "M"]: fold_all,
-	["Z", "R"]: unfold_all , 
+	["Z", "R"]: unfold_all ,
 	["Z", "C"]: fold_line ,
 	["Z", "O"]: unfold_line,
 	["Z", "A"]: toggle_fold,
+	["C"]: visual_mode_change,
 	["C", "W"]: change_word,
 	["C","I","W"]: change_inside_word,
-	["Shift+C"]: change_line
+	["Shift+C"]: change_to_end_of_line,
+	["C", "C"]: change_line
 }
 
 func _enter_tree() -> void:
@@ -97,19 +101,15 @@ func _enter_tree() -> void:
 
 func _process(delta):
 	if process_paste:
+		dedent()
 		code_editor.paste()
+		code_editor.do_indent()
 		enable_vim()
 		process_paste = false
-	if process_paste_enter:
-		await append_at_end_of_line()
-		await simulate_press(KEY_ENTER)
-		simulate_press(KEY_ENTER)
-		code_editor.paste()
-		process_paste_enter = false
+
 
 
 func _input(event):
-
 	scrpit_editor_base = script_editor.get_current_editor()
 	if !scrpit_editor_base:
 		return
@@ -129,10 +129,10 @@ func _input(event):
 		return
 	if new_keys in ["Ctrl+Left", "Ctrl+Right","Shift+Tab", "Up", "Down", "Left", "Right"]:
 		return
-	
 
-	
-		
+
+
+
 
 	if vim_mode and event.is_pressed(): #We are in VIM mode
 		if new_keys not in ["Shift","Ctrl","Alt","Escape"]: #Don't add these to input buffer.
@@ -143,7 +143,7 @@ func _input(event):
 				get_viewport().set_input_as_handled()
 				return
 			input_buffer.push_back(new_keys)
-		
+
 		#We are in insert mode
 	if key_event.is_pressed() and key_event.get_keycode_with_modifiers() == KEY_ESCAPE:
 		enable_vim()
@@ -153,7 +153,7 @@ func _input(event):
 		if code_editor.has_selection():
 			code_editor.deselect()
 		command_counter_buffer = ""
-	
+
 	#Have bufferable input
 	if !input_buffer.is_empty():
 		process_buffer()
@@ -165,7 +165,7 @@ func process_buffer() ->void :
 	get_viewport().set_input_as_handled()
 	if abs(valid) == 1: #Full match
 		input_buffer.clear()
-	elif valid == 0: #Partial match??? 
+	elif valid == 0: #Partial match???
 #		print("Spare buffer: ", input_buffer)
 		pass
 	elif valid == 2: # Special case -- ends with "ANY"
@@ -206,8 +206,9 @@ func check_command(commands:Array) -> int:
 func enable_vim():
 	set_vim_mode(true)
 func enable_insert():
-	code_editor.deselect()
-	set_vim_mode(false)
+	if not visual_mode and not visual_line_mode:
+		code_editor.deselect()
+		set_vim_mode(false)
 func set_vim_mode(mode : bool):
 	vim_mode = mode
 	set_cursor_type()
@@ -289,7 +290,7 @@ func move_to_end_of_word():
 	move_column_relative(1)
 	var i = curr_column()
 	while i < len(current_text)-1:
-		i+= 1 
+		i+= 1
 		if current_text[i-1] in alphanumeric and current_text[i] in breakers:
 			break
 		elif current_text[i-1] in breakers and current_text[i] in alphanumeric:
@@ -306,7 +307,7 @@ func move_forward_to_start_of_word(wrap : bool = true):
 	var current_text = code_editor.get_line(curr_line())
 	var i = curr_column()
 	while i < len(current_text):
-		i+= 1 
+		i+= 1
 		if i == len(current_text):
 			break
 		move_column_relative(1)
@@ -328,7 +329,7 @@ func move_after_next_whitespace(wrap : bool = true):
 	var current_text = code_editor.get_line(curr_line())
 	var i = curr_column()
 	while i < len(current_text):
-		i+= 1 
+		i+= 1
 		if i == len(current_text):
 			break
 		move_column_relative(1)
@@ -342,7 +343,7 @@ func move_after_next_whitespace(wrap : bool = true):
 			return
 		move_forward_to_start_of_word()
 	update_selection()
-	
+
 func move_back_to_start_of_word(wrap : bool = true):
 	var current_text = code_editor.get_line(curr_line())
 #	move_column_relative(-1)
@@ -370,7 +371,7 @@ func move_to_next_whitespace():
 	move_column_relative(1)
 	var i = curr_column()
 	while i < len(current_text) -1 :
-		i+= 1 
+		i+= 1
 		if current_text[i] in whitespace:
 			break
 		move_column_relative(1)
@@ -397,10 +398,10 @@ func jump_to_last_buffered_position():
 	var temp = jump_buffer.pop_front()
 	code_editor.set_caret_line(temp.x)
 	code_editor.set_caret_column(temp.y)
+	code_editor.center_viewport_to_caret()
 	update_selection()
 func move_to_zero_column():
 	code_editor.set_caret_column(0)
-
 
 # Append
 func append():
@@ -421,27 +422,28 @@ func newline_insert():
 	if code_editor.has_selection():
 		code_editor.deselect()
 	simulate_press(KEY_ENTER)
-	
-	
+
+
 func previous_line_insert():
 	move_line_relative(-1)
 	code_editor.set_caret_column(99999)
 	enable_insert()
 	simulate_press(KEY_ENTER)
-	
+
 func paste_after():
-	if visual_mode:
-		visual_mode_delete()
-		enable_insert()
-		process_paste = true
+	if code_editor.has_selection():
+		code_editor.delete_selection()
+		code_editor.paste()
 		return
+	enable_insert()
 	if full_line_copy:
-		process_paste_enter = true
+		code_editor.set_caret_column(99999)
+		simulate_press(KEY_ENTER)
 	else:
 		move_column_relative(1)
-		process_paste = true
+	process_paste = true
 
-func paste_before():	
+func paste_before():
 	if code_editor.has_selection():
 		code_editor.delete_selection()
 	if full_line_copy:
@@ -449,6 +451,7 @@ func paste_before():
 		move_to_end_of_line()
 		simulate_press(KEY_ENTER)
 	code_editor.paste()
+
 func replace_one_character(the_char): # TODO
 	enable_insert()
 	code_editor.select(curr_line(), curr_column(), curr_line(), curr_column() +1)
@@ -461,7 +464,7 @@ func replace_selection():
 	code_editor.delete_selection()
 	enable_insert()
 
-	
+
 # Deletion
 func delete_line():
 	select_line()
@@ -474,6 +477,15 @@ func delete_to_end_of_line():
 	code_editor.select(curr_line(), curr_column(), curr_line(), 9999)
 	copy()
 	code_editor.delete_selection()
+func change_to_end_of_line():
+	if visual_mode:
+		delete_line()
+		return
+	code_editor.select(curr_line(), curr_column(), curr_line(), 9999)
+	copy()
+	code_editor.delete_selection()
+	enable_insert()
+
 func delete_at_cursor():
 	var line_len = len(code_editor.get_line(curr_line()))
 	if line_len == curr_column():
@@ -505,7 +517,7 @@ func change_word():
 	code_editor.cut()
 	visual_mode = false
 	enable_insert()
-	
+
 func change_inside_word():
 	if curr_column() == code_editor.get_line(curr_line()).length() -1:
 		delete_at_cursor()
@@ -522,6 +534,16 @@ func change_inside_word():
 	code_editor.cut()
 	visual_mode = false
 	enable_insert()
+
+func visual_inside_word():
+	reset_visual()
+	enable_vim()
+	code_editor.delete_selection()
+	update_selection()
+	move_back_to_start_of_word(false)
+	enter_visual_selection()
+	move_forward_to_start_of_word()
+
 
 func change_line():
 	delete_line()
@@ -547,6 +569,15 @@ func visual_mode_delete():
 		copy()
 		code_editor.delete_selection()
 		reset_visual()
+
+func visual_mode_change():
+	if !visual_mode and !visual_line_mode:
+		return -1
+	if  code_editor.has_selection():
+		copy()
+		code_editor.delete_selection()
+		reset_visual()
+		enable_insert()
 
 
 # Selection
@@ -587,7 +618,7 @@ func update_selection():
 		code_editor.select(select_from_line, 0 if (v_offset == 0) else 99999, curr_line(), 99999 if (v_offset == 0) else 0)
 	if visual_mode:
 		code_editor.select(select_from_line, select_from_column + select_offset, curr_line(), curr_column() + offset)
-		
+
 
 # Folding
 func unfold_all():
@@ -607,8 +638,8 @@ func undo():
 	code_editor.deselect()
 func redo():
 	code_editor.redo()
-func save():	
-	simulate_press(KEY_S, true) 
+func save():
+	simulate_press(KEY_S, true)
 
 ## Resets visual modes to false
 func reset_visual():
@@ -619,6 +650,7 @@ func indent():
 func dedent():
 	code_editor.unindent_lines()
 func search_function():
+	push_jump_buffer()
 	simulate_press(KEY_F, true)
 
 func find_next_occurance_of_word():
@@ -664,14 +696,14 @@ func yank_line():
 	full_line_copy = true
 	reset_visual()
 
-func page_up():	
+func page_up():
 	var last = code_editor.get_last_full_visible_line()
 	var first = code_editor.get_first_visible_line()
 	var diff = last - first
 	var curr = code_editor.scroll_vertical
 	code_editor.scroll_vertical = code_editor.get_scroll_pos_for_line( curr - (diff/2))
 	code_editor.set_caret_line(curr_line() - (diff/2))
-	
+
 #	print(curr)
 
 func page_down():
